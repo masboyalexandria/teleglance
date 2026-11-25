@@ -3,3 +3,7 @@ dist/
 .env
 *.ehpk
 .DS_Store
+.bot-token
+backend/.state.json
+backend/.state.json
+backend/backend.log

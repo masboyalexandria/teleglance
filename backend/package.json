@@ -1,0 +1,1 @@
+{"description":"TeleGlance backend: polls the Telegram Bot API, serves a digest and a one-tap send endpoint to the G2 app. Zero dependencies, Node 20+.","engines":{"node":">=20"},"name":"teleglance-backend","private":true,"scripts":{"start":"node server.js"},"type":"module","version":"0.1.0"}
