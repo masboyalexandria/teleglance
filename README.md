@@ -39,6 +39,18 @@ an AI-drafted reply with a single tap (or ring press) — no typing, no phone.
   `http://localhost:3000` (required on real G2 hardware).
 - No bot token is in this repo — the token lives only in the backend
   environment, never committed.
+- Day 3 polish (Wed 25 Nov, same day): digest now shows **up to 5 chats**
+  with swipe navigation (touchpad/ring up-down = `SCROLL_TOP` /
+  `SCROLL_BOTTOM`) and a separate **message screen** — swipe past either
+  end of the digest opens the selected chat's full last message (wrapped,
+  ASCII-only); on that screen a tap sends the draft, a double-tap goes
+  back, and swipes move between chats' messages. Tap-to-send,
+  double-tap-to-dismiss, backend-down and empty states, and the
+  idempotent send (never double-sends) all still work. Verified in the
+  simulator against a mock backend with 5 demo chats (screenshots
+  `sim-polish-*.png`) and against the live backend with 1 real chat.
+  Dev override: load the app with `?backend=http://localhost:3001` to
+  point it at a different backend; default is `http://localhost:3000`.
 
 ## Run it (simulator)
 

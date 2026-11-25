@@ -10,13 +10,25 @@ import { fetchDigest, sendReply, type DigestChat, type DigestResponse } from './
 // TeleGlance — glanceable Telegram digest + one-tap approved reply.
 //
 // Read flow: on start (and after every action) the app fetches the digest
-// from the local backend (GET /api/digest) and renders up to 3 chats, one
-// line each, with the draft reply for the top chat.
-// Write flow: a single tap sends the top chat's draft via the backend
+// from the local backend (GET /api/digest) and renders up to 5 chats, one
+// line each, plus the selected chat's summary and its draft reply.
+// Write flow: a single tap sends the selected chat's draft via the backend
 // (POST /api/send — idempotent on chatId:messageId). A double-tap
-// dismisses the top chat without sending. When no chats remain, a
+// dismisses the selected chat without sending. When no chats remain, a
 // double-tap exits the app. Chats handled on the glasses are tracked
 // locally (handledIds) so a sent/dismissed chat stops showing.
+//
+// Navigation (touchpad swipe / ring up-down, SCROLL_TOP / SCROLL_BOTTOM):
+//   • Digest: swipe moves the selection between chats. Swiping past either
+//     end opens the selected chat's full message (the only way to reach the
+//     message screen — tap and double-tap are already taken by send and
+//     dismiss). This also means the message screen is reachable even with
+//     a single chat.
+//   • Message screen: swipe moves between chats' messages, tap sends the
+//     shown chat's draft, double-tap goes back to the digest.
+//   • In both views the selection defaults to the first (top) chat, so a
+//     tap with no prior swipe still sends the top chat's draft, exactly
+//     as before.
 //
 // The backend (backend/server.js, port 3000) is the only thing that talks
 // to Telegram. If it is not running, the app says so plainly instead of
@@ -25,6 +37,10 @@ import { fetchDigest, sendReply, type DigestChat, type DigestResponse } from './
 // presented as real. The app manifest (app.json) declares the network
 // permission for the backend origin; without it the fetch is blocked on
 // real G2 hardware.
+//
+// Rendering limits: the glasses font is ASCII-only (a non-ASCII glyph can
+// blank the whole container), and the text container caps at 999 bytes, so
+// every line is truncated and the final content is sliced as a safety net.
 
 const bridge = await waitForEvenAppBridge()
 
@@ -51,16 +67,83 @@ const result = await bridge.createStartUpPageContainer(
 
 console.log('Page created:', result === 0 ? 'success' : `failed (${result})`)
 
+const MAX_CHATS = 5
+const MAX_BYTES = 990
+
 let digest: DigestResponse | null = null
 let backendDown = false
 /** messageIds already sent or dismissed on the glasses this session. */
 const handledIds = new Set<number>()
 let lastAction = ''
 let sending = false
+/** Index into visibleChats(); 0 = top chat. */
+let selectedIndex = 0
+let view: 'digest' | 'message' = 'digest'
 
 function visibleChats(): DigestChat[] {
   if (!digest) return []
-  return digest.chats.filter((c) => !handledIds.has(c.messageId)).slice(0, 3)
+  return digest.chats.filter((c) => !handledIds.has(c.messageId)).slice(0, MAX_CHATS)
+}
+
+/** Clamp the selection into range; call after every digest refresh. */
+function clampSelection() {
+  const n = visibleChats().length
+  if (selectedIndex > n - 1) selectedIndex = Math.max(0, n - 1)
+  if (selectedIndex < 0) selectedIndex = 0
+}
+
+function trunc(s: string, n: number): string {
+  const t = (s || '').replace(/\s+/g, ' ').trim()
+  return t.length <= n ? t : t.slice(0, n - 1) + '…'
+}
+
+/** Wrap text to lines of at most `width` chars, at most `maxLines` lines. */
+function wrapText(s: string, width: number, maxLines: number): string[] {
+  const words = (s || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean)
+  const lines: string[] = []
+  let cur = ''
+  for (const w of words) {
+    const next = cur ? `${cur} ${w}` : w
+    if (next.length > width && cur) {
+      lines.push(cur)
+      cur = w
+      if (lines.length === maxLines) break
+    } else {
+      cur = next
+    }
+  }
+  if (lines.length < maxLines && cur) lines.push(cur)
+  return lines
+}
+
+function renderDigest(chats: DigestChat[], tag: string): string {
+  const lines = chats.map((c, i) => {
+    const mark = i === selectedIndex ? '>' : ' '
+    const n = c.unread > 1 ? ` (${c.unread})` : ''
+    return `${mark} ${i + 1}. ${trunc(c.title, 26)}${n}`
+  })
+  const top = chats[selectedIndex]
+  const body =
+    `TeleGlance${tag} - ${chats.length} unread\n` +
+    lines.join('\n') +
+    `\n${top.lastFrom}: ${trunc(top.summary, 52)}` +
+    `\nReply: "${trunc(top.draft, 52)}"` +
+    `\nTap: send - Dbl: dismiss - Swipe: move, past edge: open`
+  return body
+}
+
+function renderMessage(chat: DigestChat, tag: string): string {
+  const msgLines = wrapText(chat.lastText || chat.summary, 48, 6)
+  if ((chat.lastText || '').replace(/\s+/g, ' ').trim().length > msgLines.join(' ').length) {
+    msgLines[msgLines.length - 1] += ' ...'
+  }
+  return (
+    `TeleGlance${tag} - ${trunc(chat.title, 30)}\n` +
+    `From: ${trunc(chat.lastFrom, 40)}\n` +
+    msgLines.join('\n') +
+    `\nReply: "${trunc(chat.draft, 52)}"` +
+    `\nTap: send - Dbl: back - Swipe: prev/next msg`
+  )
 }
 
 function render() {
@@ -74,23 +157,20 @@ function render() {
     const chats = visibleChats()
     const tag = digest.mode === 'mock' ? ' [DEMO]' : ''
     if (chats.length === 0) {
+      view = 'digest'
       content = `TeleGlance${tag}\nAll caught up - no unread chats.\nDouble-tap to exit.`
+    } else if (view === 'message') {
+      content = renderMessage(chats[selectedIndex], tag)
     } else {
-      const lines = chats.map((c, i) => {
-        const n = c.unread > 1 ? ` (${c.unread})` : ''
-        return `${i + 1}. ${c.title}${n}\n   ${c.lastFrom}: ${c.summary}`
-      })
-      const top = chats[0]
-      content =
-        `TeleGlance${tag} - ${chats.length} unread\n` +
-        lines.join('\n') +
-        `\nReply #1: "${top.draft}"\nTap: send - Double-tap: dismiss`
+      content = renderDigest(chats, tag)
     }
   }
   if (lastAction) content += `\n${lastAction}`
   // Glasses firmware font is ASCII-only: strip anything outside ASCII so a
   // single fancy glyph can never blank the whole container.
   content = content.replace(/[^\x00-\x7F]/g, '')
+  // Text container byte cap (999): slice as a safety net after truncation.
+  if (content.length > MAX_BYTES) content = content.slice(0, MAX_BYTES)
   void bridge
     .textContainerUpgrade(
       new TextContainerUpgrade({
@@ -110,6 +190,8 @@ async function refreshDigest() {
     console.log('Digest fetch failed:', String(e).slice(0, 120))
     backendDown = true
   }
+  clampSelection()
+  if (view === 'message' && visibleChats().length === 0) view = 'digest'
   render()
 }
 
@@ -126,18 +208,61 @@ async function sendDraft(chat: DigestChat) {
   } finally {
     sending = false
   }
+  view = 'digest'
   await refreshDigest()
 }
 
-function dismissTop() {
+function dismissSelected() {
   const chats = visibleChats()
   if (chats.length === 0) {
     bridge.shutDownPageContainer(1)
     return
   }
-  handledIds.add(chats[0].messageId)
+  handledIds.add(chats[selectedIndex].messageId)
   lastAction = 'Dismissed.'
+  clampSelection()
   render()
+}
+
+function openMessage() {
+  const chats = visibleChats()
+  if (chats.length === 0) return
+  view = 'message'
+  render()
+}
+
+/** Swipe down: next chat; past the last chat, open the message screen. */
+function swipeDown() {
+  const chats = visibleChats()
+  if (chats.length === 0 || backendDown) return
+  if (view === 'message') {
+    if (selectedIndex < chats.length - 1) selectedIndex++
+    render()
+    return
+  }
+  if (selectedIndex < chats.length - 1) {
+    selectedIndex++
+    render()
+  } else {
+    openMessage()
+  }
+}
+
+/** Swipe up: previous chat; past the first chat, open the message screen. */
+function swipeUp() {
+  const chats = visibleChats()
+  if (chats.length === 0 || backendDown) return
+  if (view === 'message') {
+    if (selectedIndex > 0) selectedIndex--
+    render()
+    return
+  }
+  if (selectedIndex > 0) {
+    selectedIndex--
+    render()
+  } else {
+    openMessage()
+  }
 }
 
 // Reads the event type out of one envelope.
@@ -164,14 +289,29 @@ const unsubscribe = bridge.onEvenHubEvent((event) => {
   const textType = eventTypeOf(event.textEvent)
 
   if (sysType === OsEventTypeList.DOUBLE_CLICK_EVENT || textType === OsEventTypeList.DOUBLE_CLICK_EVENT) {
-    dismissTop()
+    if (view === 'message') {
+      view = 'digest'
+      render()
+    } else {
+      dismissSelected()
+    }
+    return
+  }
+
+  if (sysType === OsEventTypeList.SCROLL_BOTTOM_EVENT || textType === OsEventTypeList.SCROLL_BOTTOM_EVENT) {
+    swipeDown()
+    return
+  }
+
+  if (sysType === OsEventTypeList.SCROLL_TOP_EVENT || textType === OsEventTypeList.SCROLL_TOP_EVENT) {
+    swipeUp()
     return
   }
 
   if (sysType === OsEventTypeList.CLICK_EVENT || textType === OsEventTypeList.CLICK_EVENT) {
     const chats = visibleChats()
     if (chats.length > 0 && !backendDown) {
-      void sendDraft(chats[0])
+      void sendDraft(chats[selectedIndex])
     }
     return
   }

@@ -3,9 +3,14 @@
  *
  * The app talks ONLY to our own backend (http://localhost:3000 in dev).
  * The Telegram bot token never enters this bundle.
+ *
+ * Dev override: load the app with ?backend=http://localhost:3001 to point
+ * it at a different backend (e.g. a mock-only backend for screenshots).
+ * On real hardware the query is empty and the default applies.
  */
 
-export const BACKEND_URL = 'http://localhost:3000'
+export const BACKEND_URL =
+  new URLSearchParams(location.search).get('backend') || 'http://localhost:3000'
 
 export interface DigestChat {
   id: number
