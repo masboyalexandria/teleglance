@@ -65,9 +65,10 @@ evenhub-simulator http://localhost:5173
 ```
 
 The glasses app shows "Backend offline." instead of stale data if the
-backend is not running. With no real Telegram messages yet, the backend
+backend is not running. When no real Telegram messages exist yet, the backend
 serves clearly-labelled `[DEMO]` mock chats so the flow can be demoed
-end-to-end; mock data is never presented as real.
+end-to-end; mock data is never presented as real. With real messages present
+(verified 25 Nov 2026 with a live DM chat) it serves live data instead.
 
 Simulator quirk (v0.7.3): `GET /api/screenshot/glasses` returns a solid
 green frame in this build — verify the display through the simulator
