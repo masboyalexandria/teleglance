@@ -1,5 +1,7 @@
 # TeleGlance — Telegram digest + one-tap AI reply approval on Even Realities G2
 
+**Demo video:** https://www.youtube.com/watch?v=_AXfKqqsB3M (unlisted, 65 s, with English voiceover; silent version: `demo/teleglance-demo.mp4`, narration script: `demo/narration-script.md`).
+
 **Hackathon:** Heads Up: Even Realities (DoraHacks), build week 23–29 Nov 2026.
 **Tracks:** 01 Messaging & News + Special Prize: Best Telegram integration.
 **Team:** solo — masboyalexandria.
